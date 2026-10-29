@@ -111,7 +111,10 @@
 
   function asJSON(res) {
     if ((res.headers.get('Content-Type') || '').indexOf('application/json') === -1) {
-      var error = new Error(res.redirected ? 'You have been signed out. Reload the page.' : 'The page is stale. Reload it and try again.');
+      var message = 'The page is stale. Reload it and try again.';
+      if (res.redirected) message = 'You have been signed out. Reload the page.';
+      else if (res.status >= 500) message = 'Your proxy answered HTTP ' + res.status + ' instead of the addon. Check that the addon is running and try again.';
+      var error = new Error(message);
       error.friendly = true;
       throw error;
     }

@@ -17,6 +17,11 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
+// upstreamFailed answers a JSON request whose media server or plex.tv call
+// failed. It is not 502: Cloudflare and some proxies replace a 502 or 504
+// from the origin with their own HTML page, which would hide the message.
+const upstreamFailed = http.StatusUnprocessableEntity
+
 const (
 	probeTimeout   = 15 * time.Second
 	signOutTimeout = 3 * time.Second
@@ -445,7 +450,7 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	probe, err := a.Registry.Probe(ctx, server)
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, describe(err).Error())
+		jsonError(w, upstreamFailed, describe(err).Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": probe.Version, "libraries": libraryList(probe.Libraries)})
@@ -464,7 +469,7 @@ func (a *app) plexPIN(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	pin, err := a.Registry.PlexPIN(ctx)
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, "cannot reach plex.tv from the addon; paste a token instead")
+		jsonError(w, upstreamFailed, "cannot reach plex.tv from the addon; paste a token instead")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": pin.ID, "auth_url": pin.AuthURL})
@@ -486,7 +491,7 @@ func (a *app) plexPoll(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusGone, "the sign-in expired, start over")
 		return
 	case err != nil:
-		jsonError(w, http.StatusBadGateway, "cannot reach plex.tv from the addon; paste a token instead")
+		jsonError(w, upstreamFailed, "cannot reach plex.tv from the addon; paste a token instead")
 		return
 	case !claimed:
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "claimed": false})
@@ -494,7 +499,7 @@ func (a *app) plexPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	servers, err := a.Registry.PlexServers(ctx, account.Token)
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, "signed in, but the server list could not be read: "+describe(err).Error())
+		jsonError(w, upstreamFailed, "signed in, but the server list could not be read: "+describe(err).Error())
 		return
 	}
 	list := make([]map[string]any, len(servers))
@@ -548,7 +553,7 @@ func (a *app) passwordSignIn(w http.ResponseWriter, r *http.Request, kind store.
 		return
 	case err != nil:
 		a.signins.forgive(req.URL)
-		jsonError(w, http.StatusBadGateway, describe(err).Error())
+		jsonError(w, upstreamFailed, describe(err).Error())
 		return
 	}
 	a.signins.reset(req.URL)

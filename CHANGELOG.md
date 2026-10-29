@@ -10,6 +10,10 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 - Navidrome support, through its Subsonic API. Add a Navidrome server on the setup page by signing in with a username and password, or by pasting an API key. The password is never stored: only a salted Subsonic token made from it is kept, and it stops working when the password changes. Songs stream as the original file, with seeking, and a library can be picked like on Plex and Jellyfin. Server ids are `navidrome-1`, `navidrome-2` and so on.
 
+### Fixed
+
+- Behind Cloudflare, a failed connection test or sign-in on the setup page said "The page is stale" instead of the real error, because Cloudflare replaces a 502 from the addon with its own page. These answers are now 422.
+
 ## [1.1.0] - 2026-09-27
 
 ### Changed

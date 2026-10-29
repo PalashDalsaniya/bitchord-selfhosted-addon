@@ -444,11 +444,11 @@ func TestTestConnectionEndpoint(t *testing.T) {
 		t.Fatalf("libraries = %v", answer["libraries"])
 	}
 	rec, answer = a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: fake.URL, Token: "wrong"})
-	if rec.Code != http.StatusBadGateway || answer["ok"] != false || !strings.Contains(answer["error"].(string), "rejected the credentials") || strings.Contains(rec.Body.String(), "wrong") {
+	if rec.Code != upstreamFailed || answer["ok"] != false || !strings.Contains(answer["error"].(string), "rejected the credentials") || strings.Contains(rec.Body.String(), "wrong") {
 		t.Fatalf("wrong token: %d %s", rec.Code, rec.Body.String())
 	}
 	rec, answer = a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: fakes.DeadURL(t), Token: "x"})
-	if message, _ := answer["error"].(string); rec.Code != http.StatusBadGateway || answer["ok"] != false || !strings.HasPrefix(message, "plex:") || strings.Contains(message, "rejected the credentials") {
+	if message, _ := answer["error"].(string); rec.Code != upstreamFailed || answer["ok"] != false || !strings.HasPrefix(message, "plex:") || strings.Contains(message, "rejected the credentials") {
 		t.Fatalf("dead server: %d %v", rec.Code, answer)
 	}
 	slug := a.addPlex(fake, "Home")
@@ -552,7 +552,7 @@ func TestPlexSignInWhenPlexTVIsUnreachable(t *testing.T) {
 	t.Cleanup(a.reg.Stop)
 	a.handler = New(Options{Store: a.store, Registry: a.reg, Now: func() time.Time { return a.now }})
 	rec, answer := a.json(http.MethodPost, "/setup/plex/pin", map[string]any{})
-	if rec.Code != http.StatusBadGateway || !strings.Contains(answer["error"].(string), "paste a token") {
+	if rec.Code != upstreamFailed || !strings.Contains(answer["error"].(string), "paste a token") {
 		t.Fatalf("pin: %d %v", rec.Code, answer)
 	}
 }
@@ -826,7 +826,7 @@ func TestJellyfinSignInLimiterCountsOnlyRejectedCredentials(t *testing.T) {
 	fake := fakes.NewJellyfin(t)
 	fake.FailWith(http.StatusServiceUnavailable)
 	for i := range 6 {
-		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusBadGateway {
+		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != upstreamFailed {
 			t.Fatalf("upstream failure %d: %d", i, rec.Code)
 		}
 	}
