@@ -8,6 +8,7 @@ import (
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/navidrome"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
@@ -90,6 +91,16 @@ func (r *Registry) JellyfinSignOut(ctx context.Context, serverURL, deviceID, tok
 		deviceID = r.clientIDNow()
 	}
 	return jellyfin.SignOut(ctx, r.opts.HTTP, serverURL, r.opts.Version, deviceID, token)
+}
+
+// NavidromeSignIn checks the username and password and returns the Subsonic
+// token credential that stands in for them; the password is not kept.
+func (r *Registry) NavidromeSignIn(ctx context.Context, serverURL, username, password string) (Account, error) {
+	session, err := navidrome.SignIn(ctx, serverURL, username, password)
+	if err != nil {
+		return Account{}, err
+	}
+	return Account{Token: session.Credential, Username: session.Username}, nil
 }
 
 type PlexServer struct {

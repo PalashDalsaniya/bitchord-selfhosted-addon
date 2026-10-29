@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/navidrome"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
@@ -560,7 +561,7 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
 	fake := fakes.NewJellyfin(t)
-	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
 	if rec.Code != http.StatusOK || answer["ok"] != true || answer["username"] != fakes.JellyfinUser || answer["ref"] == "" {
 		t.Fatalf("sign-in: %d %v", rec.Code, answer)
 	}
@@ -580,18 +581,64 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 		t.Fatalf("url change on a signed-in server: %d", moved.Code)
 	}
 	for i := range 5 {
-		rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: "nope"})
+		rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: "nope"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: %d", i, rec.Code)
 		}
 	}
-	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusTooManyRequests {
+	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("after five failures: %d", rec.Code)
 	}
 	if logs := a.logs.String(); strings.Contains(logs, fakes.JellyfinPassword) || strings.Contains(logs, "nope") || strings.Contains(logs, fakes.JellyfinSessionPrefix) {
 		t.Fatalf("logs carry a credential:\n%s", logs)
 	}
 	_ = plexURLs
+}
+
+func TestNavidromeSignInStoresATokenAndNeverThePassword(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewNavidrome(t)
+	rec, answer := a.json(http.MethodPost, "/setup/navidrome/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword})
+	if rec.Code != http.StatusOK || answer["ok"] != true || answer["username"] != fakes.NavidromeUser || answer["ref"] == "" {
+		t.Fatalf("sign-in: %d %v", rec.Code, answer)
+	}
+	ref := answer["ref"].(string)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"navidrome"}, "label": {"Home"}, "url": {fake.URL}, "token_ref": {ref}, "library": {"Music"}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	server, _ := a.store.Snapshot().Server("navidrome-1")
+	if _, _, _, ok := navidrome.ParseCredential(server.Token); !ok || server.Auth != store.AuthNavidromeSignIn || server.Account != fakes.NavidromeUser || server.Library != "1" || server.LibraryName != "Music" {
+		t.Fatalf("stored = %+v", server)
+	}
+	if strings.Contains(server.Token, fakes.NavidromePassword) || strings.Contains(rec.Body.String(), server.Token) {
+		t.Fatal("the password was stored or the credential reached the browser")
+	}
+	if rec := a.form("/setup/servers/navidrome-1", url.Values{"label": {"Home"}, "url": {fake.URL}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("an edit keeping the sign-in: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec, answer := a.json(http.MethodPost, "/setup/navidrome/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: "nope"}); rec.Code != http.StatusUnauthorized || answer["error"] != "navidrome rejected the sign-in" {
+		t.Fatalf("wrong password: %d %v", rec.Code, answer)
+	}
+	if logs := a.logs.String(); strings.Contains(logs, fakes.NavidromePassword) || strings.Contains(logs, "nope") || strings.Contains(logs, server.Token) {
+		t.Fatalf("logs carry a credential:\n%s", logs)
+	}
+}
+
+func TestNavidromeAPIKeyIsAPastedToken(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewNavidrome(t)
+	rec, answer := a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Navidrome, URL: fake.URL, Token: fakes.NavidromeAPIKey})
+	if rec.Code != http.StatusOK || answer["version"] != fakes.NavidromeVersion || len(answer["libraries"].([]any)) != 2 {
+		t.Fatalf("test: %d %v", rec.Code, answer)
+	}
+	if rec := a.form("/setup/servers", url.Values{"kind": {"navidrome"}, "url": {fake.URL}, "token": {fakes.NavidromeAPIKey}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	if server, _ := a.store.Snapshot().Server("navidrome-1"); server.Token != fakes.NavidromeAPIKey || server.Auth != store.AuthToken {
+		t.Fatalf("stored = %+v", server)
+	}
 }
 
 func TestConcurrentLoginAttemptsAreLimitedAtomically(t *testing.T) {
@@ -733,7 +780,7 @@ func TestAFailedSaveKeepsTheSignIn(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
 	fake := fakes.NewJellyfin(t)
-	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("sign-in: %d %v", rec.Code, answer)
 	}
@@ -779,17 +826,17 @@ func TestJellyfinSignInLimiterCountsOnlyRejectedCredentials(t *testing.T) {
 	fake := fakes.NewJellyfin(t)
 	fake.FailWith(http.StatusServiceUnavailable)
 	for i := range 6 {
-		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusBadGateway {
+		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusBadGateway {
 			t.Fatalf("upstream failure %d: %d", i, rec.Code)
 		}
 	}
 	fake.FailWith(0)
 	for i := range 4 {
-		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: "nope"}); rec.Code != http.StatusUnauthorized {
+		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: "nope"}); rec.Code != http.StatusUnauthorized {
 			t.Fatalf("rejected %d: %d", i, rec.Code)
 		}
 	}
-	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusOK {
+	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusOK {
 		t.Fatalf("sign-in after upstream failures and four rejections: %d", rec.Code)
 	}
 }
@@ -800,7 +847,7 @@ func logouts(fake *fakes.Jellyfin) []fakes.Request {
 
 func (a *testApp) jellyfinSignIn(fake *fakes.Jellyfin) string {
 	a.t.Helper()
-	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
 	if rec.Code != http.StatusOK {
 		a.t.Fatalf("sign-in: %d %v", rec.Code, answer)
 	}
@@ -1079,7 +1126,7 @@ func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 	a.signIn()
 	fake := fakes.NewJellyfin(t)
 	for _, label := range []string{"Music", "Audiobooks"} {
-		rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+		rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", passwordSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("sign-in: %d %v", rec.Code, answer)
 		}

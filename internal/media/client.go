@@ -3,8 +3,10 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -21,6 +23,9 @@ type ClientOptions struct {
 	Authorize     func(*http.Request)
 	HeaderTimeout time.Duration
 	CallTimeout   time.Duration
+	// RedactQuery drops the query from transport errors, for a backend
+	// whose credentials travel in the URL.
+	RedactQuery bool
 }
 
 type Client struct {
@@ -29,6 +34,7 @@ type Client struct {
 	tokenVar    string
 	authorize   func(*http.Request)
 	callTimeout time.Duration
+	redactQuery bool
 	http        *http.Client
 }
 
@@ -50,6 +56,7 @@ func NewClient(o ClientOptions) *Client {
 		tokenVar:    o.TokenVar,
 		authorize:   o.Authorize,
 		callTimeout: o.CallTimeout,
+		redactQuery: o.RedactQuery,
 		// No http.Client.Timeout: it would cut a long audio body short.
 		http: &http.Client{Transport: transport},
 	}
@@ -70,6 +77,15 @@ func (c *Client) Open(ctx context.Context, method, path string, header http.Head
 	req.Header.Set("Accept-Encoding", "identity")
 	res, err := c.http.Do(req)
 	if err != nil {
+		var urlErr *url.Error
+		if c.redactQuery && errors.As(err, &urlErr) {
+			if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+				parsed.RawQuery = ""
+				urlErr.URL = parsed.String()
+			} else {
+				urlErr.URL = ""
+			}
+		}
 		return nil, fmt.Errorf("%s: %w", c.name, err)
 	}
 	switch res.StatusCode {

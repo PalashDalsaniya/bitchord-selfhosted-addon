@@ -320,7 +320,7 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 			return server, giveBack, fmt.Errorf("the sign-in belongs to %s, not %s; sign in again", kindName(pending.kind), kindName(server.Kind))
 		}
 		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
-		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
+		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn, store.Navidrome: store.AuthNavidromeSignIn}[server.Kind]
 	case form.token != "":
 		server.Token, server.Account, server.DeviceID, server.Auth = form.token, "", "", store.AuthToken
 	case existing.Token == "":
@@ -506,14 +506,24 @@ func (a *app) plexPoll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "claimed": true, "username": account.Username, "ref": ref, "servers": list})
 }
 
-type jellyfinSignInRequest struct {
+type passwordSignInRequest struct {
 	URL      string `json:"url"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
-	var req jellyfinSignInRequest
+	a.passwordSignIn(w, r, store.Jellyfin, a.Registry.JellyfinSignIn)
+}
+
+func (a *app) navidromeSignIn(w http.ResponseWriter, r *http.Request) {
+	a.passwordSignIn(w, r, store.Navidrome, a.Registry.NavidromeSignIn)
+}
+
+// passwordSignIn trades a username and password for the credential the
+// kind stores instead. The password is used for this one request only.
+func (a *app) passwordSignIn(w http.ResponseWriter, r *http.Request, kind store.Kind, signIn func(ctx context.Context, serverURL, username, password string) (registry.Account, error)) {
+	var req passwordSignInRequest
 	if err := readJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "malformed request")
 		return
@@ -529,11 +539,12 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 	defer cancel()
-	account, err := a.Registry.JellyfinSignIn(ctx, req.URL, req.Username, req.Password)
+	account, err := signIn(ctx, req.URL, req.Username, req.Password)
+	source := string(kind)
 	switch {
 	case errors.Is(err, media.ErrUnauthorized):
-		a.Log.Warn("jellyfin sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
-		jsonError(w, http.StatusUnauthorized, "jellyfin rejected the sign-in")
+		a.Log.Warn(source+" sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
+		jsonError(w, http.StatusUnauthorized, source+" rejected the sign-in")
 		return
 	case err != nil:
 		a.signins.forgive(req.URL)
@@ -541,8 +552,8 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.signins.reset(req.URL)
-	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
-	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
+	ref := a.refs.put(kind, account.Token, account.Username, account.DeviceID)
+	a.Log.Info(source+" sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/navidrome"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
@@ -132,6 +133,8 @@ func NewBackend(server store.Server, clientID, version string, log *slog.Logger)
 			deviceID = clientID
 		}
 		return jellyfin.New(jellyfin.Options{BaseURL: server.URL, APIKey: server.Token, DeviceID: deviceID, Version: version}), nil
+	case store.Navidrome:
+		return navidrome.New(navidrome.Options{BaseURL: server.URL, Credential: server.Token}), nil
 	default:
 		return nil, fmt.Errorf("unknown server kind %q", server.Kind)
 	}
